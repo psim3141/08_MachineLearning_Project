@@ -1,0 +1,124 @@
+---
+title: "Machine Learning Prediction of Exercise Performance"
+subtitle: "Practical Machine Learning Course Project"
+author: "Patrick Simon"
+date: "30 7 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+Participants of a study were asked to perform strength exercises either correctly, or in one of four wrong ways, while wearing electronic monitoring devices. This project aims to use machine learning methods to develop a model that can reliably predict these five categories based on the various available measurement variables. A very reliable prediction model with an accuracy of over 99% is obtained using a random forest algorithm with 5-fold cross validation. 
+
+## Reading the data
+
+The data, which has graciously been provided by Ugulino et al. at : http://groupware.les.inf.puc-rio.br/har, must first be loaded into R. There is a training set and a test set. Many of the entries are either not available, empty string, or division by zero errors. All of these will be read as `NA`.
+
+```{r}
+## Check if the files are downloaded, otherwise do so
+if(!("pml-training.csv" %in% dir())) {
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileUrl,destfile="pml-training.csv",method="libcurl")
+} 
+if(!("pml-testing.csv" %in% dir())) {
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileUrl,destfile="pml-testing.csv",method="libcurl")
+}
+
+alltrain <- read.csv("pml-training.csv",header=TRUE,
+                  stringsAsFactors=T,na.strings=c("NA","","#DIV/0!"))
+alltest <- read.csv("pml-testing.csv",header=TRUE,
+                  stringsAsFactors=T,na.strings=c("NA","","#DIV/0!"))
+```
+
+The test set will be left aside until the very end, for validation. The training set will be split further into a new training and test set. A random seed is set for the sake of reproducibility.
+
+```{r,message=FALSE}
+library(caret)
+
+RNGversion("3.6.0")
+set.seed(481516)
+
+inTrain <- createDataPartition(y=alltrain$classe, p=0.7, list=FALSE)
+training <- alltrain[inTrain,]
+testing <- alltrain[-inTrain,]
+```
+
+## Exploratory analysis
+First off, all columns in which more than 90% of the entries consists of `NA` values will be removed. Furthermore, the first seven columns, which contain only subject identifiers and timestamps, will also be removed.
+
+```{r}
+goodcols <- colSums(is.na(training))/dim(training)[1] < 0.9
+gtrain <- training[,goodcols]
+gtrain <- gtrain[,-(1:7)]
+
+ci <- which(colnames(gtrain)=="classe")
+dim(gtrain) ; ci
+```
+
+There are `r dim(gtrain)[2]` remaining columns, the last of which contains the outcome variable `classe`.
+
+```{r,fig.width=6,fig.height=3.5,fig.cap="Figure 1: Number of entries per category in the training subset (which makes up 70% of the entire training set)."}
+library(ggplot2)
+qplot(gtrain$classe,fill=gtrain$classe) + theme_bw() +
+        labs(x="Class",y="Count",title="Number of entries/class") +
+        theme(legend.position = "")
+```
+
+Figure 1 shows a histogram of the five categories in the data, where "A" refers to a correctly performed activity, and "B" to "E" to the four different incorrect ways. Category "A" has a slightly larger number of entries than the other four.
+
+
+## Chosing and training the model
+
+One of the machine learning algorithms that show the best results for classifications are random forests. In order to increase accuracy further, a number of different cross-validation methods are available. In order not to inflate the long time it takes to calculate the model, a k-fold cross validation with `k = 5` was chosen.  
+
+```{r,cache=TRUE,eval=TRUE}
+set.seed(2342)
+trc <- trainControl(method="cv", number=5)
+modelFit <- train(y=gtrain[,ci],x=gtrain[,-ci],method="rf",trControl=trc)
+modelFit$finalModel
+```
+
+The model estimates an out-of-bag error rate of less than 1%. To further confirm the quality of the model, we can use it to predict the outcome for the data in our test subset from the initial training data.
+
+```{r}
+gtest <- testing[,goodcols]
+gtest <- gtest[,-(1:7)]
+
+tpred <- predict(modelFit,gtest[,-ci])
+conf <- confusionMatrix(tpred,gtest$classe)
+
+conf$table
+conf$overall[1]
+```
+
+Again, we have very good agreement between the predictions and the actual classes, with `r round(conf$overall[1]*100,3)`% accuracy, which leads us to an estimated out-of-bag error of `r round((1-conf$overall[1])*100,3)`%. A visualization of the confusion matrix can be seen in Figure 2.
+
+```{r,fig.width=6,fig.height=4.5,fig.cap="Figure 2: Confusion matrix for the comparison between the actual and predicted categroy values for the test subset"}
+chue <- function(n) {
+        hues = seq(15, 375, length = n + 1)
+        hcl(h = hues, l = 65, c = 100)[1:n]
+}
+cols=chue(5)
+plot(conf$table,col=cols, main="Random forest model confusion matrix")
+```
+
+
+With such an accurate result, it is unnecessary to consider alternate algorithms.
+
+## Predictions for the validation set
+
+In the final step, the model will be applied to predict the categories for the 20 entries in the validation set.
+
+```{r}
+gvalid <- alltest[,goodcols]
+gvalid <- gvalid[,-(1:7)]
+
+vpred <- predict(modelFit,gvalid[,-ci])
+vpred
+```
+
